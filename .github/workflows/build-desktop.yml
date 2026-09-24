@@ -25,15 +25,38 @@ env:
   RELEASE_VERSION: ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag) || 'v0.0.0' }}
 
 jobs:
+  resolve-source:
+    name: Resolve Source Commit
+    # 构建源一律钉死到一个具体 commit：发布前把 main 同步到上游最新，
+    # 三个平台构建同一 SHA，避免构建过程中上游更新导致产物不一致。
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+    steps:
+      - name: Resolve source SHA
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ref="${{ github.event_name == 'push' && 'main' || (inputs.source_ref || 'main') }}"
+          sha="$(git ls-remote https://github.com/zai-org/ZCode.git "refs/heads/$ref" | cut -f1)"
+          if [ -z "$sha" ]; then
+            sha="$(git ls-remote https://github.com/zai-org/ZCode.git "refs/tags/$ref" | cut -f1)"
+          fi
+          [ -n "$sha" ] || { echo "Cannot resolve zai-org/ZCode ref: $ref" >&2; exit 1; }
+          echo "source_sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Building from zai-org/ZCode@$sha ($ref)"
+
   build-linux-x64:
     name: Build Linux x86_64 Packages
+    needs: resolve-source
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source (zai-org/ZCode)
         uses: actions/checkout@v4
         with:
           repository: zai-org/ZCode
-          ref: ${{ inputs.source_ref || 'main' }}
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
           fetch-depth: 0
 
       - name: Install system dependencies
@@ -89,13 +112,14 @@ jobs:
 
   build-mac-arm64:
     name: Build macOS arm64 DMG
+    needs: resolve-source
     runs-on: macos-14
     steps:
       - name: Checkout source (zai-org/ZCode)
         uses: actions/checkout@v4
         with:
           repository: zai-org/ZCode
-          ref: ${{ inputs.source_ref || 'main' }}
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
           fetch-depth: 0
 
       - name: Setup pnpm
@@ -141,6 +165,7 @@ jobs:
 
   build-windows-x64:
     name: Build Windows x64 Installer
+    needs: resolve-source
     runs-on: windows-latest
     defaults:
       run:
@@ -150,7 +175,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: zai-org/ZCode
-          ref: ${{ inputs.source_ref || 'main' }}
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
           fetch-depth: 0
 
       - name: Setup pnpm
