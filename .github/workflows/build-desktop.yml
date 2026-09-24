@@ -2,11 +2,10 @@ name: Build Desktop & Release
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    tags:
-      - 'v*'
+    inputs:
+      source_ref:
+        description: 'Source branch/commit/tag to build from (zai-org/ZCode)'
+        default: 'main'
 
 permissions:
   contents: write
@@ -16,8 +15,12 @@ jobs:
     name: Build Linux x86_64 Packages
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout source (zai-org/ZCode)
         uses: actions/checkout@v4
+        with:
+          repository: zai-org/ZCode
+          ref: ${{ inputs.source_ref || 'main' }}
+          fetch-depth: 0
 
       - name: Install system dependencies
         run: |
@@ -74,8 +77,12 @@ jobs:
     name: Build macOS arm64 DMG
     runs-on: macos-14
     steps:
-      - name: Checkout code
+      - name: Checkout source (zai-org/ZCode)
         uses: actions/checkout@v4
+        with:
+          repository: zai-org/ZCode
+          ref: ${{ inputs.source_ref || 'main' }}
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -125,8 +132,12 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Checkout code
+      - name: Checkout source (zai-org/ZCode)
         uses: actions/checkout@v4
+        with:
+          repository: zai-org/ZCode
+          ref: ${{ inputs.source_ref || 'main' }}
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
