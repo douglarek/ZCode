@@ -30,8 +30,10 @@ git pull --ff-only upstream main
 echo "==> fast-forward package-standalone to the same commit"
 git checkout package-standalone
 # package-standalone 与 main 无共同历史（独立孤儿分支），用 rebase 把
-# 打包提交叠到上游最新提交之上；若上游强制推送导致冲突需手工处理。
-git rebase main
+# 打包提交叠到上游最新提交之上。rebase 会重写本分支提交并要求强推，
+# 且需要 commit.gpgsign=false（本机 gpg 不可用）。
+git -c commit.gpgsign=false rebase main
+git push --force-with-lease origin package-standalone
 
 echo "==> tag $tag on $(git rev-parse --short HEAD)"
 if [ -n "$dry_run" ]; then
