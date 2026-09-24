@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# ZCode 发版：同步 main 到上游最新 -> 基于最新源码打版本 tag -> 推送触发发布。
+# ZCode 发版：同步 main 到上游最新 -> 在 package-standalone 上打版本 tag -> 推送触发发布。
+#
+# 分支模型：package-standalone 是独立孤儿分支，只含 .github 打包配置，
+# 与 main 零共同历史，任何情况下都不 rebase / merge main 进来。
+# 构建源由 CI 的工作流自己检出 zai-org/ZCode 最新 main（独立目录），tag 只是触发器和版本标记。
 #
 # 用法：
 #   scripts/release.sh v3.14.3          # 发布 v3.14.3
@@ -23,25 +27,24 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
-echo "==> sync main to upstream"
-git checkout main
-git pull --ff-only upstream main
+current="$(git rev-parse --abbrev-ref HEAD)"
+[ "$current" = "package-standalone" ] || { echo "error: run this from package-standalone (on: $current)" >&2; exit 1; }
 
-echo "==> fast-forward package-standalone to the same commit"
-git checkout package-standalone
-# package-standalone 与 main 无共同历史（独立孤儿分支），用 rebase 把
-# 打包提交叠到上游最新提交之上。rebase 会重写本分支提交并要求强推，
-# 且需要 commit.gpgsign=false（本机 gpg 不可用）。
-git -c commit.gpgsign=false rebase main
-git push --force-with-lease origin package-standalone
+echo "==> sync main to upstream latest (source branch only)"
+git fetch upstream main
+git push origin "upstream/main:refs/heads/main" --force-with-lease=refs/heads/main:"$(git rev-parse origin/main 2>/dev/null || echo 0000000000000000000000000000000000000000)"
 
-echo "==> tag $tag on $(git rev-parse --short HEAD)"
+echo "==> resolve upstream main tip for the record"
+source_sha="$(git ls-remote https://github.com/zai-org/ZCode.git refs/heads/main | cut -f1)"
+echo "building from zai-org/ZCode@$source_sha"
+
+echo "==> tag $tag on package-standalone ($(git rev-parse --short HEAD))"
 if [ -n "$dry_run" ]; then
   echo "dry-run: would run:"
   echo "  git tag $tag"
-  echo "  git push origin package-standalone $tag"
+  echo "  git push origin $tag"
 else
-  git tag "$tag"
-  git push origin package-standalone "$tag"
+  git -c commit.gpgsign=false tag "$tag"
+  git push origin "$tag"
   echo "==> pushed; watch: https://github.com/douglarek/ZCode/actions"
 fi

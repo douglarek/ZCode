@@ -27,8 +27,10 @@ env:
 jobs:
   resolve-source:
     name: Resolve Source Commit
-    # 构建源一律钉死到一个具体 commit：发布前把 main 同步到上游最新，
-    # 三个平台构建同一 SHA，避免构建过程中上游更新导致产物不一致。
+    # 构建源与 package-standalone 分支无关：CI 在自己的独立目录检出
+    # zai-org/ZCode 的 main（或手动指定的 ref）最新 commit，三个平台构建
+    # 同一 SHA，避免构建过程中上游更新导致产物不一致。
+    # 手动触发时可用 source_ref 覆盖；tag 触发同样取上游 main 最新。
     runs-on: ubuntu-latest
     outputs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
@@ -38,7 +40,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ref="${{ github.event_name == 'push' && 'main' || (inputs.source_ref || 'main') }}"
+          ref="${{ inputs.source_ref || 'main' }}"
           sha="$(git ls-remote https://github.com/zai-org/ZCode.git "refs/heads/$ref" | cut -f1)"
           if [ -z "$sha" ]; then
             sha="$(git ls-remote https://github.com/zai-org/ZCode.git "refs/tags/$ref" | cut -f1)"
