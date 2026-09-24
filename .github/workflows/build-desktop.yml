@@ -1,8 +1,10 @@
 name: Build Desktop & Release
 
 on:
-  # 在 package-standalone 分支上手动打版本 tag（vX.Y.Z）并推送即可触发；
-  # 也可以在 Actions 页面手动运行，指定 release_tag / source_ref。
+  # Primary path: manual dispatch (scripts/release.sh runs `gh workflow run`
+  # after tagging main). Tag pushes only fire when the tagged commit itself
+  # contains this file; tags cut on main (pure source snapshot) cannot
+  # trigger workflows.
   push:
     tags:
       - 'v*'
@@ -12,14 +14,14 @@ on:
         description: 'Version tag to publish, e.g. v3.14.3'
         default: 'v3.14.3'
       source_ref:
-        description: 'Source branch/commit/tag to build from (zai-org/ZCode)'
+        description: 'Source branch/commit/tag to build from (douglarek/ZCode main = upstream backup)'
         default: 'main'
 
 permissions:
   contents: write
 
-# 版本 tag（v3.14.3 → 3.14.3）；手动触发时取 release_tag 输入。
-# 三个构建 job 与发布 job 共用，避免各处硬编码。
+# Version tag (v3.14.3 -> 3.14.3); taken from release_tag on manual runs.
+# Shared by all build jobs and the publish job to avoid hardcoding.
 env:
   RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
   RELEASE_VERSION: ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag) || 'v0.0.0' }}
@@ -27,37 +29,36 @@ env:
 jobs:
   resolve-source:
     name: Resolve Source Commit
-    # 构建源与 package-standalone 分支无关：CI 在自己的独立目录检出
-    # zai-org/ZCode 的 main（或手动指定的 ref）最新 commit，三个平台构建
-    # 同一 SHA，避免构建过程中上游更新导致产物不一致。
-    # 手动触发时可用 source_ref 覆盖；tag 触发同样取上游 main 最新。
+    # The build source is this repo's (douglarek/ZCode) main branch, which is
+    # the backup of zai-org/ZCode; scripts/release.sh syncs it to upstream
+    # before tagging. CI checks out that exact commit in its own directory so
+    # all three platforms build the same SHA. Override via source_ref on
+    # manual runs (default: main).
     runs-on: ubuntu-latest
     outputs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
     steps:
       - name: Resolve source SHA
         id: resolve
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ref="${{ inputs.source_ref || 'main' }}"
-          sha="$(git ls-remote https://github.com/zai-org/ZCode.git "refs/heads/$ref" | cut -f1)"
+          sha="$(git ls-remote https://github.com/douglarek/ZCode.git "refs/heads/$ref" | cut -f1)"
           if [ -z "$sha" ]; then
-            sha="$(git ls-remote https://github.com/zai-org/ZCode.git "refs/tags/$ref" | cut -f1)"
+            sha="$(git ls-remote https://github.com/douglarek/ZCode.git "refs/tags/$ref" | cut -f1)"
           fi
-          [ -n "$sha" ] || { echo "Cannot resolve zai-org/ZCode ref: $ref" >&2; exit 1; }
+          [ -n "$sha" ] || { echo "Cannot resolve douglarek/ZCode ref: $ref" >&2; exit 1; }
           echo "source_sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "Building from zai-org/ZCode@$sha ($ref)"
+          echo "Building from douglarek/ZCode@$sha ($ref)"
 
   build-linux-x64:
     name: Build Linux x86_64 Packages
     needs: resolve-source
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source (zai-org/ZCode)
+      - name: Checkout source (douglarek/ZCode main)
         uses: actions/checkout@v4
         with:
-          repository: zai-org/ZCode
+          repository: douglarek/ZCode
           ref: ${{ needs.resolve-source.outputs.source_sha }}
           fetch-depth: 0
 
@@ -117,10 +118,10 @@ jobs:
     needs: resolve-source
     runs-on: macos-14
     steps:
-      - name: Checkout source (zai-org/ZCode)
+      - name: Checkout source (douglarek/ZCode main)
         uses: actions/checkout@v4
         with:
-          repository: zai-org/ZCode
+          repository: douglarek/ZCode
           ref: ${{ needs.resolve-source.outputs.source_sha }}
           fetch-depth: 0
 
@@ -173,10 +174,10 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Checkout source (zai-org/ZCode)
+      - name: Checkout source (douglarek/ZCode main)
         uses: actions/checkout@v4
         with:
-          repository: zai-org/ZCode
+          repository: douglarek/ZCode
           ref: ${{ needs.resolve-source.outputs.source_sha }}
           fetch-depth: 0
 

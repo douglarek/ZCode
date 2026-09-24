@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-# ZCode 发版：同步 main 到上游最新 -> 在 package-standalone 上打版本 tag -> 推送触发发布。
+# ZCode release: sync fork main to upstream latest -> tag version on main ->
+# dispatch the build workflow (tags on main cannot trigger it themselves).
 #
-# 分支模型：package-standalone 是独立孤儿分支，只含 .github 打包配置，
-# 与 main 零共同历史，任何情况下都不 rebase / merge main 进来。
-# 构建源由 CI 的工作流自己检出 zai-org/ZCode 最新 main（独立目录），tag 只是触发器和版本标记。
+# Branch model:
+# - main: source backup branch (survives upstream takedowns), kept in
+#   lockstep with zai-org/ZCode main. Version tags (vX.Y.Z) are cut here so
+#   each tag marks the exact source tree being released.
+# - package-standalone: standalone orphan branch holding only the packaging
+#   config (.github, scripts). Zero shared history with main, never merged
+#   or rebased onto it, and squashed to a single commit on every release.
+# - CI builds from douglarek/ZCode main / the tag in its own checkout
+#   directory; the package-standalone branch itself carries no source.
 #
-# 用法：
-#   scripts/release.sh v3.14.3          # 发布 v3.14.3
+# Usage:
+#   scripts/release.sh v3.14.3          # release v3.14.3
 #   scripts/release.sh v3.14.3 --dry-run
 #
-# 前置条件：package-standalone 为仓库默认分支（否则 tag 触发不生效）。
+# Prerequisite: package-standalone is the repo's default branch (otherwise
+# the workflow cannot be registered/dispatched).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -30,21 +38,64 @@ fi
 current="$(git rev-parse --abbrev-ref HEAD)"
 [ "$current" = "package-standalone" ] || { echo "error: run this from package-standalone (on: $current)" >&2; exit 1; }
 
-echo "==> sync main to upstream latest (source branch only)"
+echo "==> sync fork main to upstream latest (backup/source branch)"
 git fetch upstream main
-git push origin "upstream/main:refs/heads/main" --force-with-lease=refs/heads/main:"$(git rev-parse origin/main 2>/dev/null || echo 0000000000000000000000000000000000000000)"
-
-echo "==> resolve upstream main tip for the record"
-source_sha="$(git ls-remote https://github.com/zai-org/ZCode.git refs/heads/main | cut -f1)"
-echo "building from zai-org/ZCode@$source_sha"
-
-echo "==> tag $tag on package-standalone ($(git rev-parse --short HEAD))"
-if [ -n "$dry_run" ]; then
-  echo "dry-run: would run:"
-  echo "  git tag $tag"
-  echo "  git push origin $tag"
+local_main="$(git rev-parse refs/remotes/origin/main 2>/dev/null || echo "")"
+upstream_main="$(git rev-parse refs/remotes/upstream/main)"
+main_in_sync=1
+if [ "$local_main" = "$upstream_main" ]; then
+  echo "fork main already at upstream/main ($upstream_main)"
 else
-  git -c commit.gpgsign=false tag "$tag"
-  git push origin "$tag"
-  echo "==> pushed; watch: https://github.com/douglarek/ZCode/actions"
+  main_in_sync=0
+  echo "fork main needs update: $local_main -> $upstream_main"
 fi
+echo "building from douglarek/ZCode@main=$upstream_main"
+
+dirty="$(git status --porcelain)"
+branch_sha="$(git rev-parse --short HEAD)"
+
+echo "==> tag $tag on main ($upstream_main)"
+if [ -n "$dry_run" ]; then
+  echo "dry-run: nothing below is executed. Would run:"
+  [ "$main_in_sync" = 0 ] && echo "  git push origin $upstream_main:refs/heads/main --force-with-lease=..."
+  [ -n "$dirty" ] && echo "  (commit pending packaging changes on package-standalone)"
+  [ -n "$dirty" ] && echo "  git push --force-with-lease origin package-standalone  # squashed to 1 commit"
+  echo "  git tag -f $tag $upstream_main"
+  echo "  git push -f origin $tag"
+  echo "  gh workflow run build-desktop.yml -f release_tag=$tag -f source_ref=$upstream_main"
+  exit 0
+fi
+
+# --- everything below mutates state ---
+
+if [ "$main_in_sync" = 0 ]; then
+  git push origin "$upstream_main:refs/heads/main" \
+    --force-with-lease="refs/heads/main:${local_main:-0000000000000000000000000000000000000000}"
+fi
+
+echo "==> squash package-standalone into a single commit and force-push"
+# Amended commit hash changes on every release, so the branch is always
+# rewritten; --force-with-lease guards against remote races.
+if [ -n "$dirty" ]; then
+  git add -A
+  git -c commit.gpgsign=false commit --amend -m \
+    "packaging: desktop build and release pipeline
+
+Standalone packaging config only; builds source from
+douglarek/ZCode main (zai-org/ZCode backup). See
+.github/workflows/build-desktop.yml." >/dev/null
+  branch_sha="$(git rev-parse --short HEAD)"
+  git push --force-with-lease origin package-standalone
+  echo "package-standalone pushed as $branch_sha"
+else
+  echo "package-standalone unchanged ($branch_sha); nothing to push"
+fi
+
+echo "==> tag $tag on main and dispatch build"
+git -c commit.gpgsign=false tag -f "$tag" "$upstream_main"
+git push -f origin "$tag"
+# Tags on main cannot trigger the workflow (the tagged commit has no
+# workflow file), so dispatch the run explicitly against the tag's source.
+gh workflow run build-desktop.yml -f "release_tag=$tag" -f "source_ref=$upstream_main" \
+  || echo "warning: gh workflow run failed; trigger manually at https://github.com/douglarek/ZCode/actions" >&2
+echo "==> triggered; watch: https://github.com/douglarek/ZCode/actions"
