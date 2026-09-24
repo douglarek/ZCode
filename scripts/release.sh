@@ -29,7 +29,9 @@ git pull --ff-only upstream main
 
 echo "==> fast-forward package-standalone to the same commit"
 git checkout package-standalone
-git merge --ff-only main
+# package-standalone 与 main 无共同历史（独立孤儿分支），用 rebase 把
+# 打包提交叠到上游最新提交之上；若上游强制推送导致冲突需手工处理。
+git rebase main
 
 echo "==> tag $tag on $(git rev-parse --short HEAD)"
 if [ -n "$dry_run" ]; then
