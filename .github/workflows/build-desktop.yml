@@ -54,6 +54,10 @@ jobs:
     name: Build Linux x86_64 Packages
     needs: resolve-source
     runs-on: ubuntu-latest
+    # One platform must not fail the workflow. Publish uses the artifact output.
+    continue-on-error: true
+    outputs:
+      artifact: ${{ steps.result.outputs.artifact }}
     steps:
       - name: Checkout source (douglarek/ZCode main)
         uses: actions/checkout@v4
@@ -133,6 +137,7 @@ jobs:
           ls -lh packages/desktop/dist/
 
       - name: Upload Linux Artifacts
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: zcode-linux-x64-artifacts
@@ -143,10 +148,24 @@ jobs:
             packages/desktop/dist/*.pkg.tar.zst
           if-no-files-found: error
 
+      - name: Record artifact result
+        id: result
+        if: always()
+        run: |
+          if [ "${{ steps.upload.outcome }}" = "success" ]; then
+            echo "artifact=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "artifact=failure" >> "$GITHUB_OUTPUT"
+          fi
+
+
   build-mac-arm64:
     name: Build macOS arm64 DMG
     needs: resolve-source
     runs-on: macos-14
+    continue-on-error: true
+    outputs:
+      artifact: ${{ steps.result.outputs.artifact }}
     steps:
       - name: Checkout source (douglarek/ZCode main)
         uses: actions/checkout@v4
@@ -220,26 +239,60 @@ jobs:
           ls -lh packages/desktop/dist/
 
       - name: Upload macOS arm64 DMG
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: zcode-mac-arm64-artifacts
           path: packages/desktop/dist/*.dmg
           if-no-files-found: error
 
+      - name: Record artifact result
+        id: result
+        if: always()
+        run: |
+          if [ "${{ steps.upload.outcome }}" = "success" ]; then
+            echo "artifact=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "artifact=failure" >> "$GITHUB_OUTPUT"
+          fi
+
+
   build-windows-x64:
     name: Build Windows x64 Installer
     needs: resolve-source
     runs-on: windows-latest
+    continue-on-error: true
+    outputs:
+      artifact: ${{ steps.result.outputs.artifact }}
     defaults:
       run:
         shell: bash
     steps:
+      # windows-latest sets core.autocrlf=true. That rewrites Gen UI vendor
+      # *.min.js to CRLF and fails packages/desktop/scripts/gen-ui-runtime-assets.mjs
+      # with "Gen UI vendor hash mismatch". .gitattributes only pins *.mjs and *.sh.
+      - name: Keep LF line endings
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
       - name: Checkout source (douglarek/ZCode main)
         uses: actions/checkout@v4
         with:
           repository: douglarek/ZCode
           ref: ${{ needs.resolve-source.outputs.source_sha }}
           fetch-depth: 0
+
+
+      - name: Check Gen UI vendor line endings
+        shell: bash
+        run: |
+          vendor="apps/zcode-cli/packages/visualize-plugin/skills/visualize/assets/vendor"
+          if grep -q $'\r' "$vendor"/*; then
+            echo "CRLF in Gen UI vendor files; sha256 check would fail" >&2
+            exit 1
+          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -306,15 +359,33 @@ jobs:
           ls -lh packages/desktop/dist/
 
       - name: Upload Windows x64 Installer
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: zcode-windows-x64-artifacts
           path: packages/desktop/dist/*.exe
           if-no-files-found: error
 
+      - name: Record artifact result
+        id: result
+        if: always()
+        run: |
+          if [ "${{ steps.upload.outcome }}" = "success" ]; then
+            echo "artifact=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "artifact=failure" >> "$GITHUB_OUTPUT"
+          fi
+
+
   publish-release:
     name: Publish to GitHub Releases
     needs: [build-linux-x64, build-mac-arm64, build-windows-x64]
+    if: >-
+      always() &&
+      !cancelled() &&
+      (needs.build-linux-x64.outputs.artifact == 'success' ||
+       needs.build-mac-arm64.outputs.artifact == 'success' ||
+       needs.build-windows-x64.outputs.artifact == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -329,6 +400,15 @@ jobs:
         run: |
           cd release-assets
           sha256sum * > SHA256SUMS.txt
+          {
+            echo "Automated build of ZCode Desktop ${RELEASE_TAG}."
+            echo
+            echo "Attached files are the platform packages that built successfully."
+            echo
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+          } > ../release-notes.md
           echo "=== All Release Assets & Checksums ==="
           cat SHA256SUMS.txt
 
@@ -337,12 +417,37 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ZCode Desktop ${{ env.RELEASE_TAG }}
-          body: |
-            Automated build of ZCode Desktop ${{ env.RELEASE_TAG }}:
-            - **Linux (x86_64)**: RPM, DEB, AppImage, Arch (.pkg.tar.zst)
-            - **macOS (Apple Silicon)**: arm64 DMG
-            - **Windows (x86_64)**: NSIS Setup .exe
+          body_path: release-notes.md
           files: release-assets/*
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # continue-on-error on the build jobs keeps a single platform failure from
+  # failing the run. This job fails the run only when nothing was published.
+  workflow-result:
+    name: Workflow result
+    needs: [build-linux-x64, build-mac-arm64, build-windows-x64, publish-release]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail only when no platform was published
+        run: |
+          linux="${{ needs.build-linux-x64.outputs.artifact }}"
+          mac="${{ needs.build-mac-arm64.outputs.artifact }}"
+          win="${{ needs.build-windows-x64.outputs.artifact }}"
+          publish="${{ needs.publish-release.result }}"
+          echo "linux=$linux mac=$mac windows=$win publish=$publish"
+          ok=0
+          [ "$linux" = success ] && ok=1
+          [ "$mac" = success ] && ok=1
+          [ "$win" = success ] && ok=1
+          if [ "$ok" != 1 ]; then
+            echo "Every platform build failed." >&2
+            exit 1
+          fi
+          if [ "$publish" != success ]; then
+            echo "At least one platform built, but publishing did not succeed." >&2
+            exit 1
+          fi
+          echo "Published the platforms that built successfully."
