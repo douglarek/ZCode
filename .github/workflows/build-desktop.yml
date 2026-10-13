@@ -80,6 +80,36 @@ jobs:
           node-version: 24
           cache: 'pnpm'
 
+      - name: Fix web-share @zcode/shared alias
+        shell: bash
+        run: |
+          node --input-type=module <<'EOF'
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const file = "packages/web-share/vite.config.ts";
+          const text = readFileSync(file, "utf8");
+          const pattern =
+            /^([ \t]*)["']@zcode\/shared["']:\s*resolve\(REPO_ROOT,\s*["']packages\/shared\/src\/index\.ts["']\),?[ \t]*\r?\n/m;
+          if (!pattern.test(text)) {
+            const stillAliased = text.split("\n").some((line) => {
+              const code = line.replace(/\/\/.*$/, "").trim();
+              return /^["']@zcode\/shared["']\s*:/.test(code);
+            });
+            if (stillAliased) {
+              console.error(`${file} still has an @zcode/shared alias this patch does not recognize`);
+              process.exit(1);
+            }
+            console.log(`${file}: prefix alias already absent`);
+            process.exit(0);
+          }
+          const next = text.replace(
+            pattern,
+            "$1// 去掉 @zcode/shared -> src/index.ts 前缀别名：子路径会被拼到 index.ts 后面（ENOTDIR）。\n$1// 入口和子路径都走 packages/shared/package.json exports。\n",
+          );
+          writeFileSync(file, next);
+          console.log(`patched ${file}`);
+          EOF
+
       - name: Bootstrap workspace
         run: pnpm bootstrap
         env:
@@ -137,6 +167,36 @@ jobs:
           node-version: 24
           cache: 'pnpm'
 
+      - name: Fix web-share @zcode/shared alias
+        shell: bash
+        run: |
+          node --input-type=module <<'EOF'
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const file = "packages/web-share/vite.config.ts";
+          const text = readFileSync(file, "utf8");
+          const pattern =
+            /^([ \t]*)["']@zcode\/shared["']:\s*resolve\(REPO_ROOT,\s*["']packages\/shared\/src\/index\.ts["']\),?[ \t]*\r?\n/m;
+          if (!pattern.test(text)) {
+            const stillAliased = text.split("\n").some((line) => {
+              const code = line.replace(/\/\/.*$/, "").trim();
+              return /^["']@zcode\/shared["']\s*:/.test(code);
+            });
+            if (stillAliased) {
+              console.error(`${file} still has an @zcode/shared alias this patch does not recognize`);
+              process.exit(1);
+            }
+            console.log(`${file}: prefix alias already absent`);
+            process.exit(0);
+          }
+          const next = text.replace(
+            pattern,
+            "$1// 去掉 @zcode/shared -> src/index.ts 前缀别名：子路径会被拼到 index.ts 后面（ENOTDIR）。\n$1// 入口和子路径都走 packages/shared/package.json exports。\n",
+          );
+          writeFileSync(file, next);
+          console.log(`patched ${file}`);
+          EOF
+
       - name: Bootstrap workspace
         run: pnpm bootstrap
         env:
@@ -192,6 +252,36 @@ jobs:
         with:
           node-version: 24
           cache: 'pnpm'
+
+      - name: Fix web-share @zcode/shared alias
+        shell: bash
+        run: |
+          node --input-type=module <<'EOF'
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const file = "packages/web-share/vite.config.ts";
+          const text = readFileSync(file, "utf8");
+          const pattern =
+            /^([ \t]*)["']@zcode\/shared["']:\s*resolve\(REPO_ROOT,\s*["']packages\/shared\/src\/index\.ts["']\),?[ \t]*\r?\n/m;
+          if (!pattern.test(text)) {
+            const stillAliased = text.split("\n").some((line) => {
+              const code = line.replace(/\/\/.*$/, "").trim();
+              return /^["']@zcode\/shared["']\s*:/.test(code);
+            });
+            if (stillAliased) {
+              console.error(`${file} still has an @zcode/shared alias this patch does not recognize`);
+              process.exit(1);
+            }
+            console.log(`${file}: prefix alias already absent`);
+            process.exit(0);
+          }
+          const next = text.replace(
+            pattern,
+            "$1// 去掉 @zcode/shared -> src/index.ts 前缀别名：子路径会被拼到 index.ts 后面（ENOTDIR）。\n$1// 入口和子路径都走 packages/shared/package.json exports。\n",
+          );
+          writeFileSync(file, next);
+          console.log(`patched ${file}`);
+          EOF
 
       - name: Bootstrap workspace
         run: pnpm bootstrap
